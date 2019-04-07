@@ -145,9 +145,9 @@ class ScheduleMasterAPI:
     def cmd_allsched(self, args):
         print(json.dumps(self.get_all_schedules(datetime.datetime.now(), datetime.datetime.now()), indent=4))
 
-
-
-
+    def cmd_me(self, args):
+        root = self._request('UserInfo.aspx', params={'GETUSER':'M'})
+        print(root.cssselect('div.headerleft.middle')[0].text_content().strip())
 
 
 # curl 'login.asp' -H 'User-Agent: ScheduleMaster-python (experimental)' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'Referer: https://my.schedulemaster.com/' -H 'Content-Type: application/x-www-form-urlencoded' --data 'USERID=12117-1&DATA=paraslide+spools&CMD=LOGIN&reqPage=&calling=&timestamp=&return_to=&pagename=my.schedulemaster.com'
@@ -171,6 +171,7 @@ def main():
 
     p = sp.add_parser('mysched')
     p = sp.add_parser('allsched')
+    p = sp.add_parser('me')
 
     args = parser.parse_args()
 
