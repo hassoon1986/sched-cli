@@ -8,6 +8,7 @@ import os
 import urllib.parse
 import unicodedata
 import collections
+from types import SimpleNamespace
 
 import dateutil.parser
 import requests
@@ -141,9 +142,84 @@ class ScheduleMasterAPI:
             'end':end_time.strftime('%Y-%m-%d'),
         }, timeout=31)
         resp.raise_for_status()
-        return {'r': rjs, 's': resp.json()}
+        return rjs, resp.json()
+
+    def _compute_status(self, res):
+        try:
+            return res.get('slbl').replace('warn_', '').replace('.jpg', '')
+        except Exception:
+            return None
+
+    def _filter_resources(self, resources, args):
+        if args.resources:
+            rs_filt = [r.strip() for r in args.resources.lower().split(',')]
+            resources = [r for r in resources if r['title'].lower() in rs_filt or
+                                                 r['NNO'].lower() in rs_filt or
+                                                 r['id'].lower() in rs_filt]
+        if args.models:
+            m_filt = [r.strip() for r in args.models.lower().split(',')]
+            resources = [r for r in resources if any(m in m_filt for m in r['model'].lower().split(','))]
+
+        if args.location:
+            l_filt = [r.strip() for r in args.location.lower().split(',')]
+            resources = [r for r in resources if any(l in r['location'].lower() for l in l_filt)]
+
+        if args.statuses:
+            resources = [r for r in resources if str(self._compute_status(r)) in args.statuses]
+
+        return resources
+
     def cmd_allsched(self, args):
-        print(json.dumps(self.get_all_schedules(datetime.datetime.now(), datetime.datetime.now()), indent=4))
+        start = datetime.datetime.now().replace(hour=0,minute=0,second=0,microsecond=0)
+        end = start + datetime.timedelta(1)
+        if args.start_time:
+            start = dateutil.parser.parse(args.start_time)
+            end = start + datetime.timedelta(1)
+        if args.end_time:
+            end = dateutil.parser.parse(args.end_time)
+
+        resources, reservations = self.get_all_schedules(start, end)
+        resources = self._filter_resources(resources, args)
+        resource_map = {int(r['id']): r for r in resources}
+
+        for r in reservations:
+            r['start_dt'] = dateutil.parser.parse(r['start'])
+            r['end_dt'] = dateutil.parser.parse(r['end'])
+        reservations = [r for r in reservations if r['start_dt'] >= start and
+                                                   r['end_dt'] <= end and
+                                                   r['resourceId'] in resource_map]
+
+        reservations.sort(key=lambda k: (k['resourceId'], k['start']))
+
+        # RENDER CODE
+        print(start.isoformat(), '->', end.isoformat())
+
+        seen_res = set()
+        for sched in reservations:
+            res = resource_map[sched['resourceId']]
+            if res['id'] not in seen_res:
+                seen_res.add(res['id'])
+                print()
+                print(self._render_resource(res))
+            print(sched['start'], sched['end'], sched['name'], sched['dest'])
+
+        for res in resources:
+            if res['id'] not in seen_res:
+                print()
+                print(self._render_resource(res))
+                print("no reservations")
+
+    def _render_resource(self, res):
+        status = self._compute_status(res) or 'unk'
+        res = SimpleNamespace(**res)
+        return '#{0.id} {status}  {0.title}  @ {0.location}  ({0.model})'.format(res, status=status)
+
+    def cmd_listres(self, args):
+        resources, _ = self.get_all_schedules(datetime.datetime.now(), datetime.datetime.now())
+        resources = self._filter_resources(resources, args)
+
+        for res in resources:
+            print(self._render_resource(res))
 
     def cmd_me(self, args):
         root = self._request('UserInfo.aspx', params={'GETUSER':'M'})
@@ -170,8 +246,22 @@ def main():
     p.add_argument('url')
 
     p = sp.add_parser('mysched')
+
     p = sp.add_parser('allsched')
+    p.add_argument('-s', '--start-time', help='starting time (default: today)')
+    p.add_argument('-e', '--end-time', help='ending time (default: today)')
+    p.add_argument('-r', '--resources', help='comma-separated list of resources to show')
+    p.add_argument('-m', '--models', help='comma-separated list of models to show')
+    p.add_argument('--statuses', default='yel,grn,gry,None', help='comma-separated list of acceptible resource statuses')
+    p.add_argument('-l', '--location', help='substring of location (default any)')
+
     p = sp.add_parser('me')
+
+    p = sp.add_parser('listres')
+    p.add_argument('-r', '--resources', help='comma-separated list of resources to show')
+    p.add_argument('-m', '--models', help='comma-separated list of models to show')
+    p.add_argument('-l', '--location', help='substring of location (default any)')
+    p.add_argument('--statuses', default='yel,grn,gry,None', help='comma-separated list of acceptible resource statuses')
 
     args = parser.parse_args()
 
